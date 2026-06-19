@@ -3,6 +3,7 @@
 // SPDX: Apache-2.0
 
 #include <pbrt/cpu/aggregates.h>
+#include <pbrt/cpu/grid.h>
 
 #include <pbrt/interaction.h>
 #include <pbrt/paramdict.h>
@@ -1167,6 +1168,8 @@ Primitive CreateAccelerator(const std::string &name, std::vector<Primitive> prim
         accel = BVHAggregate::Create(std::move(prims), parameters);
     else if (name == "kdtree")
         accel = KdTreeAggregate::Create(std::move(prims), parameters);
+    else if (name == "grid")
+        accel = GridAggregate::Create(std::move(prims), parameters);
     else
         ErrorExit("%s: accelerator type unknown.", name);
 
