@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <random>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -47,8 +48,6 @@ std::string ToLower(std::string s) {
 }
 
 bool IsValidPredecessor(char c) {
-    // First version: productions rewrite alphabetic modules such as F, X, A, B.
-    // Turtle commands (+, -, [, ], &, ^, /, \, |, !) pass through unchanged.
     return std::isalpha(static_cast<unsigned char>(c)) != 0;
 }
 
@@ -113,9 +112,7 @@ bool Reorthonormalize(TurtleState *state, const FileLoc *loc,
                       std::size_t symbolIndex) {
     if (!IsFinite(state->heading) || !IsFinite(state->left) || !IsFinite(state->up) ||
         LengthSquared(state->heading) <= FrameEpsilon) {
-        Error(loc,
-              "Invalid turtle frame after symbol %d.",
-              int(symbolIndex));
+        Error(loc, "Invalid turtle frame after symbol %d.", int(symbolIndex));
         return false;
     }
 
@@ -125,22 +122,16 @@ bool Reorthonormalize(TurtleState *state, const FileLoc *loc,
     state->left =
         state->left - Dot(state->left, state->heading) * state->heading;
 
-    if (!IsFinite(state->left) ||
-        LengthSquared(state->left) <= FrameEpsilon) {
-        Error(loc,
-              "Degenerate turtle left vector after symbol %d.",
-              int(symbolIndex));
+    if (!IsFinite(state->left) || LengthSquared(state->left) <= FrameEpsilon) {
+        Error(loc, "Degenerate turtle left vector after symbol %d.", int(symbolIndex));
         return false;
     }
 
     state->left = Normalize(state->left);
     state->up = Cross(state->heading, state->left);
 
-    if (!IsFinite(state->up) ||
-        LengthSquared(state->up) <= FrameEpsilon) {
-        Error(loc,
-              "Degenerate turtle up vector after symbol %d.",
-              int(symbolIndex));
+    if (!IsFinite(state->up) || LengthSquared(state->up) <= FrameEpsilon) {
+        Error(loc, "Degenerate turtle up vector after symbol %d.", int(symbolIndex));
         return false;
     }
 
@@ -155,32 +146,32 @@ bool Reorthonormalize(TurtleState *state, const FileLoc *loc,
 
 bool Yaw(TurtleState *state, Float radians,
          const FileLoc *loc, std::size_t symbolIndex) {
-    state->heading =
-        RotateAroundAxis(state->heading, state->up, radians);
-    state->left =
-        RotateAroundAxis(state->left, state->up, radians);
-
+    state->heading = RotateAroundAxis(state->heading, state->up, radians);
+    state->left = RotateAroundAxis(state->left, state->up, radians);
     return Reorthonormalize(state, loc, symbolIndex);
 }
 
 bool Pitch(TurtleState *state, Float radians,
            const FileLoc *loc, std::size_t symbolIndex) {
-    state->heading =
-        RotateAroundAxis(state->heading, state->left, radians);
-    state->up =
-        RotateAroundAxis(state->up, state->left, radians);
-
+    state->heading = RotateAroundAxis(state->heading, state->left, radians);
+    state->up = RotateAroundAxis(state->up, state->left, radians);
     return Reorthonormalize(state, loc, symbolIndex);
 }
 
 bool Roll(TurtleState *state, Float radians,
           const FileLoc *loc, std::size_t symbolIndex) {
-    state->left =
-        RotateAroundAxis(state->left, state->heading, radians);
-    state->up =
-        RotateAroundAxis(state->up, state->heading, radians);
-
+    state->left = RotateAroundAxis(state->left, state->heading, radians);
+    state->up = RotateAroundAxis(state->up, state->heading, radians);
     return Reorthonormalize(state, loc, symbolIndex);
+}
+
+bool ValidateNonnegativeAngle(Float degrees, const char *name,
+                              const FileLoc *loc) {
+    if (!std::isfinite(degrees) || degrees < 0.f || degrees > 180.f) {
+        Error(loc, "L-system \"%s\" must be finite and in [0, 180]; got %f.", name, degrees);
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -194,6 +185,21 @@ std::string BranchSegment::ToString() const {
         << " radiusEnd: " << radiusEnd
         << " depth: " << depth
         << " parentSegmentIndex: " << parentSegmentIndex
+        << " sourceSymbolIndex: " << sourceSymbolIndex
+        << " ]";
+    return out.str();
+}
+
+std::string LeafInstance::ToString() const {
+    std::ostringstream out;
+    out << "[ LeafInstance"
+        << " position: " << position.ToString()
+        << " heading: " << heading.ToString()
+        << " left: " << left.ToString()
+        << " up: " << up.ToString()
+        << " length: " << length
+        << " width: " << width
+        << " depth: " << depth
         << " sourceSymbolIndex: " << sourceSymbolIndex
         << " ]";
     return out.str();
@@ -242,6 +248,15 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
     definition.angleDegrees = parameters.GetOneFloat("angle", 25.f);
     definition.stepLength = parameters.GetOneFloat("length", 1.f);
     definition.radius = parameters.GetOneFloat("radius", 0.05f);
+    definition.seed = parameters.GetOneInt("seed", 1);
+    definition.leafLength = parameters.GetOneFloat("leaflength", 0.18f);
+    definition.leafWidth = parameters.GetOneFloat("leafwidth", 0.06f);
+    definition.leafYawJitterDegrees =
+        parameters.GetOneFloat("leafyawjitter", 10.f);
+    definition.leafPitchJitterDegrees =
+        parameters.GetOneFloat("leafpitchjitter", 8.f);
+    definition.leafRollJitterDegrees =
+        parameters.GetOneFloat("leafrolljitter", 18.f);
 
     int maxSymbols = parameters.GetOneInt("maxsymbols", 1'000'000);
 
@@ -268,8 +283,7 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
         return std::nullopt;
     }
 
-    if (!std::isfinite(definition.stepLength) ||
-        definition.stepLength <= 0.f) {
+    if (!std::isfinite(definition.stepLength) || definition.stepLength <= 0.f) {
         Error(loc,
               "L-system \"length\" must be finite and greater than zero; "
               "got %f.",
@@ -282,6 +296,31 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
               "L-system \"radius\" must be finite and greater than zero; "
               "got %f.",
               definition.radius);
+        return std::nullopt;
+    }
+
+    if (!std::isfinite(definition.leafLength) || definition.leafLength <= 0.f) {
+        Error(loc,
+              "L-system \"leaflength\" must be finite and greater than zero; "
+              "got %f.",
+              definition.leafLength);
+        return std::nullopt;
+    }
+
+    if (!std::isfinite(definition.leafWidth) || definition.leafWidth <= 0.f) {
+        Error(loc,
+              "L-system \"leafwidth\" must be finite and greater than zero; "
+              "got %f.",
+              definition.leafWidth);
+        return std::nullopt;
+    }
+
+    if (!ValidateNonnegativeAngle(definition.leafYawJitterDegrees,
+                                  "leafyawjitter", loc) ||
+        !ValidateNonnegativeAngle(definition.leafPitchJitterDegrees,
+                                  "leafpitchjitter", loc) ||
+        !ValidateNonnegativeAngle(definition.leafRollJitterDegrees,
+                                  "leafrolljitter", loc)) {
         return std::nullopt;
     }
 
@@ -317,13 +356,11 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
         if (colon != std::string::npos)
             axiomSeparator = colon;
         if (equal != std::string::npos &&
-            (axiomSeparator == std::string::npos ||
-             equal < axiomSeparator))
+            (axiomSeparator == std::string::npos || equal < axiomSeparator))
             axiomSeparator = equal;
 
         if (axiomSeparator != std::string::npos) {
-            std::string key =
-                ToLower(Trim(line.substr(0, axiomSeparator)));
+            std::string key = ToLower(Trim(line.substr(0, axiomSeparator)));
 
             if (key == "axiom") {
                 if (foundAxiom) {
@@ -369,8 +406,7 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
 
         char predecessor = lhs[0];
 
-        if (definition.productions.find(predecessor) !=
-            definition.productions.end()) {
+        if (definition.productions.find(predecessor) != definition.productions.end()) {
             Error(loc,
                   "Duplicate deterministic production for symbol '%c'.",
                   predecessor);
@@ -405,8 +441,7 @@ std::optional<std::string> LSystemDefinition::Expand(
     for (int iteration = 0; iteration < iterations; ++iteration) {
         std::size_t nextSize = 0;
 
-        // Compute the exact next size before allocating. This also stops
-        // exponentially growing grammars before they consume excessive memory.
+        // Compute the exact next size before allocating.
         for (char symbol : current) {
             auto iter = productions.find(symbol);
             std::size_t amount =
@@ -426,9 +461,7 @@ std::optional<std::string> LSystemDefinition::Expand(
         std::string next;
         next.reserve(nextSize);
 
-        // All replacements read from `current` and write to `next`, so this is
-        // parallel/deterministic L-system rewriting rather than in-place
-        // sequential rewriting.
+        // All replacements read from `current` and write to `next`
         for (char symbol : current) {
             auto iter = productions.find(symbol);
             if (iter == productions.end())
@@ -461,6 +494,12 @@ std::string LSystemDefinition::ToString() const {
         << " angleDegrees: " << angleDegrees
         << " stepLength: " << stepLength
         << " radius: " << radius
+        << " seed: " << seed
+        << " leafLength: " << leafLength
+        << " leafWidth: " << leafWidth
+        << " leafYawJitterDegrees: " << leafYawJitterDegrees
+        << " leafPitchJitterDegrees: " << leafPitchJitterDegrees
+        << " leafRollJitterDegrees: " << leafRollJitterDegrees
         << " maxSymbols: " << maxSymbols
         << " productions: {";
 
@@ -491,7 +530,17 @@ std::optional<TurtleResult> TurtleInterpreter::Interpret(
 
     Float angleRadians = DegreesToRadians(definition.angleDegrees);
 
-    // There can never be more drawn segments than symbols.
+    std::mt19937 rng(static_cast<std::mt19937::result_type>(definition.seed));
+    std::uniform_real_distribution<Float> yawDist(
+        -definition.leafYawJitterDegrees,
+         definition.leafYawJitterDegrees);
+    std::uniform_real_distribution<Float> pitchDist(
+        -definition.leafPitchJitterDegrees,
+         definition.leafPitchJitterDegrees);
+    std::uniform_real_distribution<Float> rollDist(
+        -definition.leafRollJitterDegrees,
+         definition.leafRollJitterDegrees);
+
     result.branches.reserve(
         std::min(expanded.size(), definition.maxSymbols));
 
@@ -510,9 +559,7 @@ std::optional<TurtleResult> TurtleInterpreter::Interpret(
                 return std::nullopt;
             }
 
-            int newSegmentIndex =
-                int(result.branches.size());
-
+            int newSegmentIndex = int(result.branches.size());
             result.branches.push_back(
                 BranchSegment{
                     start,
@@ -530,8 +577,7 @@ std::optional<TurtleResult> TurtleInterpreter::Interpret(
         }
 
         case 'f':
-            state.position +=
-                state.branchLength * state.heading;
+            state.position += state.branchLength * state.heading;
 
             if (!IsFinite(state.position)) {
                 Error(loc,
@@ -542,45 +588,37 @@ std::optional<TurtleResult> TurtleInterpreter::Interpret(
             break;
 
         case '+':
-            if (!Yaw(&state, angleRadians,
-                     loc, symbolIndex))
+            if (!Yaw(&state, angleRadians, loc, symbolIndex))
                 return std::nullopt;
             break;
 
         case '-':
-            if (!Yaw(&state, -angleRadians,
-                     loc, symbolIndex))
+            if (!Yaw(&state, -angleRadians, loc, symbolIndex))
                 return std::nullopt;
             break;
 
         case '&':
-            // Positive rotation around local left sends heading toward -up.
-            if (!Pitch(&state, angleRadians,
-                       loc, symbolIndex))
+            if (!Pitch(&state, angleRadians, loc, symbolIndex))
                 return std::nullopt;
             break;
 
         case '^':
-            if (!Pitch(&state, -angleRadians,
-                       loc, symbolIndex))
+            if (!Pitch(&state, -angleRadians, loc, symbolIndex))
                 return std::nullopt;
             break;
 
         case '\\':
-            if (!Roll(&state, angleRadians,
-                      loc, symbolIndex))
+            if (!Roll(&state, angleRadians, loc, symbolIndex))
                 return std::nullopt;
             break;
 
         case '/':
-            if (!Roll(&state, -angleRadians,
-                      loc, symbolIndex))
+            if (!Roll(&state, -angleRadians, loc, symbolIndex))
                 return std::nullopt;
             break;
 
         case '|':
-            if (!Yaw(&state, Pi,
-                     loc, symbolIndex))
+            if (!Yaw(&state, Pi, loc, symbolIndex))
                 return std::nullopt;
             break;
 
@@ -592,8 +630,7 @@ std::optional<TurtleResult> TurtleInterpreter::Interpret(
             ++state.depth;
 
             result.maxStackDepth =
-                std::max(result.maxStackDepth,
-                         stack.size());
+                std::max(result.maxStackDepth, stack.size());
             break;
 
         case ']':
@@ -610,6 +647,29 @@ std::optional<TurtleResult> TurtleInterpreter::Interpret(
             state = stack.back();
             stack.pop_back();
             break;
+
+        case 'L': {
+            TurtleState leafState = state;
+
+            if (!Yaw(&leafState, DegreesToRadians(yawDist(rng)), loc, symbolIndex) ||
+                !Pitch(&leafState, DegreesToRadians(pitchDist(rng)), loc, symbolIndex) ||
+                !Roll(&leafState, DegreesToRadians(rollDist(rng)), loc, symbolIndex)) {
+                return std::nullopt;
+            }
+
+            result.leaves.push_back(
+                LeafInstance{
+                    leafState.position,
+                    leafState.heading,
+                    leafState.left,
+                    leafState.up,
+                    definition.leafLength,
+                    definition.leafWidth,
+                    state.depth,
+                    symbolIndex
+                });
+            break;
+        }
 
         default:
             // Grammar variables such as X and A do not draw anything.

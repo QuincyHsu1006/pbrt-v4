@@ -1,7 +1,7 @@
-# pbrt-v4 L-system geometry example
+# pbrt-v4 L-system geometry + leaves example
 
 Film "rgb"
-    "string filename" [ "lsystem-tree.png" ]
+    "string filename" [ "lsystem-tree-leaves.png" ]
     "integer xresolution" [ 640 ]
     "integer yresolution" [ 640 ]
 
@@ -30,20 +30,28 @@ AttributeBegin
     Shape "lsystem"
         "string grammar" [
             "axiom: X"
-            "X -> F[+X][-X][&X][^X]"
+            "X -> F[+XL][-XL][&XL][^XL]"
             "F -> FF"
         ]
         "integer iterations" [ 4 ]
+        "integer seed" [ 42 ]
+
         "float angle" [ 24 ]
         "float length" [ 0.45 ]
         "float radius" [ 0.025 ]
+
+        "float leaflength" [ 0.22 ]
+        "float leafwidth" [ 0.075 ]
+        "float leafyawjitter" [ 10 ]
+        "float leafpitchjitter" [ 8 ]
+        "float leafrolljitter" [ 20 ]
+
         "string branchtype" [ "cylinder" ]
         "integer splitdepth" [ 0 ]
         "integer maxsymbols" [ 1000000 ]
 AttributeEnd
 
-# Ground plane: pbrt disks are initially in the object-space XY plane,
-# so rotate it to make its normal approximately +Y.
+# Ground
 AttributeBegin
     Material "diffuse"
         "rgb reflectance" [ 0.18 0.22 0.13 ]
