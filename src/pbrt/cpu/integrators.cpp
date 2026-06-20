@@ -7,6 +7,7 @@
 #include <pbrt/bsdf.h>
 #include <pbrt/bssrdf.h>
 #include <pbrt/cameras.h>
+#include <pbrt/cpu/toon.h>
 #include <pbrt/film.h>
 #include <pbrt/filters.h>
 #include <pbrt/interaction.h>
@@ -3682,6 +3683,8 @@ std::unique_ptr<Integrator> Integrator::Create(
     else if (name == "sppm")
         integrator = SPPMIntegrator::Create(parameters, colorSpace, camera, sampler,
                                             aggregate, lights, loc);
+    else if (name == "toon")
+        integrator = ToonIntegrator::Create(parameters, camera, sampler, aggregate, lights, loc);
     else
         ErrorExit(loc, "%s: integrator type unknown.", name);
 
