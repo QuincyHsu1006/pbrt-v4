@@ -211,14 +211,6 @@ bool Roll(TurtleState *state, Float radians,
     return Reorthonormalize(state, loc, symbolIndex);
 }
 
-bool ValidateNonnegativeAngle(Float degrees, const char *name,
-                              const FileLoc *loc) {
-    if (!std::isfinite(degrees) || degrees < 0.f || degrees > 180.f) {
-        Error(loc, "L-system \"%s\" must be finite and in [0, 180]; got %f.", name, degrees);
-        return false;
-    }
-    return true;
-}
 
 }  // namespace
 
@@ -231,21 +223,6 @@ std::string BranchSegment::ToString() const {
         << " radiusEnd: " << radiusEnd
         << " depth: " << depth
         << " parentSegmentIndex: " << parentSegmentIndex
-        << " sourceSymbolIndex: " << sourceSymbolIndex
-        << " ]";
-    return out.str();
-}
-
-std::string LeafInstance::ToString() const {
-    std::ostringstream out;
-    out << "[ LeafInstance"
-        << " position: " << position.ToString()
-        << " heading: " << heading.ToString()
-        << " left: " << left.ToString()
-        << " up: " << up.ToString()
-        << " length: " << length
-        << " width: " << width
-        << " depth: " << depth
         << " sourceSymbolIndex: " << sourceSymbolIndex
         << " ]";
     return out.str();
@@ -294,16 +271,8 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
     definition.angleDegrees = parameters.GetOneFloat("angle", 25.f);
     definition.stepLength = parameters.GetOneFloat("length", 1.f);
     definition.radius = parameters.GetOneFloat("radius", 0.05f);
-    definition.seed = parameters.GetOneInt("seed", 1);
-
-    definition.leafLength = parameters.GetOneFloat("leaflength", 0.18f);
-    definition.leafWidth = parameters.GetOneFloat("leafwidth", 0.06f);
-    definition.leafYawJitterDegrees =
-        parameters.GetOneFloat("leafyawjitter", 10.f);
-    definition.leafPitchJitterDegrees =
-        parameters.GetOneFloat("leafpitchjitter", 8.f);
-    definition.leafRollJitterDegrees =
-        parameters.GetOneFloat("leafrolljitter", 18.f);
+    definition.seed = parameters.GetOneInt("seed", 42);
+    definition.grammarSeed = parameters.GetOneInt("grammarseed", definition.seed);
 
     int maxSymbols = parameters.GetOneInt("maxsymbols", 1'000'000);
 
@@ -346,30 +315,6 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
         return std::nullopt;
     }
 
-    if (!std::isfinite(definition.leafLength) || definition.leafLength <= 0.f) {
-        Error(loc,
-              "L-system \"leaflength\" must be finite and greater than zero; "
-              "got %f.",
-              definition.leafLength);
-        return std::nullopt;
-    }
-
-    if (!std::isfinite(definition.leafWidth) || definition.leafWidth <= 0.f) {
-        Error(loc,
-              "L-system \"leafwidth\" must be finite and greater than zero; "
-              "got %f.",
-              definition.leafWidth);
-        return std::nullopt;
-    }
-
-    if (!ValidateNonnegativeAngle(definition.leafYawJitterDegrees,
-                                  "leafyawjitter", loc) ||
-        !ValidateNonnegativeAngle(definition.leafPitchJitterDegrees,
-                                  "leafpitchjitter", loc) ||
-        !ValidateNonnegativeAngle(definition.leafRollJitterDegrees,
-                                  "leafrolljitter", loc)) {
-        return std::nullopt;
-    }
 
     if (maxSymbols <= 0) {
         Error(loc,
@@ -670,14 +615,7 @@ std::string LSystemDefinition::ToString() const {
         << " stepLength: " << stepLength
         << " radius: " << radius
         << " seed: " << seed
-        << " leafLength: " << leafLength
-        << " leafWidth: " << leafWidth
-        << " leafYawJitterDegrees: "
-        << leafYawJitterDegrees
-        << " leafPitchJitterDegrees: "
-        << leafPitchJitterDegrees
-        << " leafRollJitterDegrees: "
-        << leafRollJitterDegrees
+        << " grammarSeed: " << grammarSeed
         << " maxSymbols: " << maxSymbols
         << " productions: {";
 
@@ -730,17 +668,6 @@ std::optional<TurtleResult> TurtleInterpreter::Interpret(
     stack.reserve(64);
 
     Float angleRadians = DegreesToRadians(definition.angleDegrees);
-
-    std::mt19937 rng(static_cast<std::mt19937::result_type>(definition.seed));
-    std::uniform_real_distribution<Float> yawDist(
-        -definition.leafYawJitterDegrees,
-         definition.leafYawJitterDegrees);
-    std::uniform_real_distribution<Float> pitchDist(
-        -definition.leafPitchJitterDegrees,
-         definition.leafPitchJitterDegrees);
-    std::uniform_real_distribution<Float> rollDist(
-        -definition.leafRollJitterDegrees,
-         definition.leafRollJitterDegrees);
 
     result.branches.reserve(
         std::min(expanded.size(), definition.maxSymbols));
@@ -848,29 +775,6 @@ std::optional<TurtleResult> TurtleInterpreter::Interpret(
             state = stack.back();
             stack.pop_back();
             break;
-
-        case 'L': {
-            TurtleState leafState = state;
-
-            if (!Yaw(&leafState, DegreesToRadians(yawDist(rng)), loc, symbolIndex) ||
-                !Pitch(&leafState, DegreesToRadians(pitchDist(rng)), loc, symbolIndex) ||
-                !Roll(&leafState, DegreesToRadians(rollDist(rng)), loc, symbolIndex)) {
-                return std::nullopt;
-            }
-
-            result.leaves.push_back(
-                LeafInstance{
-                    leafState.position,
-                    leafState.heading,
-                    leafState.left,
-                    leafState.up,
-                    definition.leafLength,
-                    definition.leafWidth,
-                    state.depth,
-                    symbolIndex
-                });
-            break;
-        }
 
         default:
             // Grammar variables such as X and A do not draw anything.

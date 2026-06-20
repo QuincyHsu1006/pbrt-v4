@@ -33,24 +33,6 @@ struct BranchSegment {
     std::string ToString() const;
 };
 
-struct LeafInstance {
-    Point3f position;
-
-    // Local orientation frame of the leaf after random jitter.
-    Vector3f heading;
-    Vector3f left;
-    Vector3f up;
-
-    Float length = 0.3f;
-    Float width = 0.12f;
-
-    int depth = 0;
-    std::size_t sourceSymbolIndex = 0;
-
-    std::string ToString() const;
-};
-
-
 // The frame is right-handed:   up = Cross(heading, left)
 // Initial frame:               heading = +Y, left = -X, up = +Z
 struct TurtleState {
@@ -71,7 +53,6 @@ struct TurtleState {
 
 struct TurtleResult {
     std::vector<BranchSegment> branches;
-    std::vector<LeafInstance> leaves;
 
     TurtleState finalState;
     std::size_t maxStackDepth = 0;
@@ -102,11 +83,7 @@ struct LSystemDefinition {
     std::size_t maxSymbols = 1'000'000;
 
     int seed = 42;
-    Float leafLength = 0.18f;
-    Float leafWidth = 0.06f;
-    Float leafYawJitterDegrees = 10.f;
-    Float leafPitchJitterDegrees = 8.f;
-    Float leafRollJitterDegrees = 18.f;
+    int grammarSeed = 42;
 
     static std::optional<LSystemDefinition> Create(
         const ParameterDictionary &parameters, const FileLoc *loc);
