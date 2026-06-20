@@ -553,6 +553,7 @@ set (PBRT_SOURCE
   src/pbrt/parser.cpp
   src/pbrt/pbrt.cpp
   src/pbrt/ray.cpp
+  src/pbrt/lsystem.cpp
   src/pbrt/samplers.cpp
   src/pbrt/scene.cpp
   src/pbrt/shapes.cpp
@@ -583,6 +584,7 @@ set (PBRT_SOURCE_HEADERS
   src/pbrt/pbrt.h
   src/pbrt/pbrt.soa
   src/pbrt/ray.h
+  src/pbrt/lsystem.h
   src/pbrt/samplers.h
   src/pbrt/scene.h
   src/pbrt/shapes.h

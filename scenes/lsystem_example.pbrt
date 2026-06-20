@@ -1,0 +1,36 @@
+# Parser-only test scene.
+# It intentionally generates no geometry in version 1.
+
+Film "rgb"
+    "string filename" [ "lsystem-parser-test.png" ]
+    "integer xresolution" [ 320 ]
+    "integer yresolution" [ 240 ]
+
+Sampler "independent"
+    "integer pixelsamples" [ 1 ]
+
+Integrator "path"
+    "integer maxdepth" [ 1 ]
+
+LookAt 0 2 -6
+       0 1  0
+       0 1  0
+
+Camera "perspective"
+    "float fov" [ 45 ]
+
+WorldBegin
+
+LightSource "infinite"
+    "rgb L" [ 1 1 1 ]
+
+Shape "lsystem"
+    "string grammar" [
+        "axiom: F"
+        "F -> F[+F]F[-F]F"
+    ]
+    "integer iterations" [ 3 ]
+    "float angle" [ 25 ]
+    "float length" [ 1 ]
+    "float radius" [ 0.05 ]
+    "integer maxsymbols" [ 1000000 ]
