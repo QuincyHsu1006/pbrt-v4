@@ -5,6 +5,7 @@
 #include <pbrt/util/math.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <cmath>
 #include <limits>
@@ -18,6 +19,7 @@ namespace pbrt {
 namespace {
 
 constexpr Float FrameEpsilon = 1e-12f;
+constexpr Float ProbabilityNormalizationTolerance = 1e-4f;
 
 std::string Trim(std::string s) {
     auto isNotSpace = [](unsigned char c) { return !std::isspace(c); };
@@ -76,6 +78,50 @@ bool ValidateBrackets(const std::string &sequence, const FileLoc *loc) {
     }
 
     return true;
+}
+
+bool ParseProbability(const std::string &text, Float *probability) {
+    if (text.empty())
+        return false;
+
+    errno = 0;
+    char *end = nullptr;
+    double value = std::strtod(text.c_str(), &end);
+
+    if (end == text.c_str() ||
+        end == nullptr ||
+        *end != '\0' ||
+        errno == ERANGE ||
+        !std::isfinite(value)) {
+        return false;
+    }
+
+    *probability = Float(value);
+    return true;
+}
+
+Float Uniform01(std::mt19937 *rng) {
+    constexpr double InvTwoTo32 = 1.0 / 4294967296.0;
+    return Float(double((*rng)()) * InvTwoTo32);
+}
+
+const ProductionAlternative &ChooseAlternative(
+    const ProductionSet &set, std::mt19937 *rng) {
+    if (!set.stochastic)
+        return set.alternatives.front();
+
+    Float u = Uniform01(rng);
+    Float cumulative = 0.f;
+
+    for (const ProductionAlternative &alternative : set.alternatives) {
+        cumulative += alternative.probability;
+        if (u < cumulative)
+            return alternative;
+    }
+
+    // The probability sum is validated during parsing. This fallback handles
+    // the final few floating-point ulps near one.
+    return set.alternatives.back();
 }
 
 Float DegreesToRadians(Float degrees) {
@@ -249,6 +295,7 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
     definition.stepLength = parameters.GetOneFloat("length", 1.f);
     definition.radius = parameters.GetOneFloat("radius", 0.05f);
     definition.seed = parameters.GetOneInt("seed", 1);
+
     definition.leafLength = parameters.GetOneFloat("leaflength", 0.18f);
     definition.leafWidth = parameters.GetOneFloat("leafwidth", 0.06f);
     definition.leafYawJitterDegrees =
@@ -396,25 +443,82 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
         std::string lhs = RemoveWhitespace(line.substr(0, arrow));
         std::string rhs = RemoveWhitespace(line.substr(arrow + 2));
 
-        if (lhs.size() != 1 || !IsValidPredecessor(lhs[0])) {
+        std::size_t probabilitySeparator = lhs.find(':');
+        bool hasExplicitProbability = (probabilitySeparator != std::string::npos);
+
+        std::string predecessorText =
+            hasExplicitProbability
+                ? lhs.substr(0, probabilitySeparator) : lhs;
+
+        if (predecessorText.size() != 1 ||
+            !IsValidPredecessor(predecessorText[0])) {
             Error(loc,
                   "Invalid predecessor \"%s\" in L-system grammar entry %d. "
-                  "The first version requires one alphabetic symbol.",
-                  lhs.c_str(), int(lineIndex + 1));
+                  "This version requires one alphabetic symbol.",
+                  predecessorText.c_str(), int(lineIndex + 1));
             return std::nullopt;
         }
 
-        char predecessor = lhs[0];
+        if (hasExplicitProbability &&
+            lhs.find(':', probabilitySeparator + 1) !=
+                std::string::npos) {
+            Error(loc,
+                  "Invalid probability syntax in grammar entry %d: \"%s\".",
+                  int(lineIndex + 1), line.c_str());
+            return std::nullopt;
+        }
 
-        if (definition.productions.find(predecessor) != definition.productions.end()) {
+        Float probability = 1.f;
+
+        if (hasExplicitProbability) {
+            std::string probabilityText =
+                lhs.substr(probabilitySeparator + 1);
+
+            if (!ParseProbability(probabilityText, &probability) ||
+                probability <= 0.f) {
+                Error(loc,
+                      "Invalid stochastic weight \"%s\" in grammar "
+                      "entry %d. Expected a finite value greater than zero.",
+                      probabilityText.c_str(),
+                      int(lineIndex + 1));
+                return std::nullopt;
+            }
+        }
+
+        if (!ValidateBrackets(rhs, loc)) {
+            return std::nullopt;
+        }
+
+        char predecessor = predecessorText[0];
+
+        auto [productionIter, inserted] =
+            definition.productions.try_emplace(predecessor);
+
+        ProductionSet &set = productionIter->second;
+
+        if (inserted) {
+            set.stochastic = hasExplicitProbability;
+        } else if (set.stochastic != hasExplicitProbability) {
+            Error(loc,
+                  "Cannot mix deterministic and stochastic productions for "
+                  "symbol '%c'. Either use one \"A -> ...\" rule or use "
+                  "\"A:probability -> ...\" for every alternative.",
+                  predecessor);
+            return std::nullopt;
+        }
+
+        if (!set.stochastic && !set.alternatives.empty()) {
             Error(loc,
                   "Duplicate deterministic production for symbol '%c'.",
                   predecessor);
             return std::nullopt;
         }
 
-        // An empty successor is legal and erases the predecessor.
-        definition.productions.emplace(predecessor, std::move(rhs));
+        set.alternatives.push_back(
+            ProductionAlternative{
+                probability,
+                std::move(rhs)
+            });
     }
 
     if (!foundAxiom) {
@@ -424,10 +528,64 @@ std::optional<LSystemDefinition> LSystemDefinition::Create(
         return std::nullopt;
     }
 
-    if (definition.axiom.size() > definition.maxSymbols) {
+    for (auto &[predecessor, set] : definition.productions) {
+        if (set.alternatives.empty()) {
+            Error(loc,
+                  "L-system production set for '%c' is empty.",
+                  predecessor);
+            return std::nullopt;
+        }
+
+        if (!set.stochastic) {
+            if (set.alternatives.size() != 1 ||
+                set.alternatives[0].probability != 1.f) {
+                Error(loc,
+                      "Invalid deterministic production set for '%c'.",
+                      predecessor);
+                return std::nullopt;
+            }
+
+            continue;
+        }
+
+        double weightSum = 0.0;
+        for (const ProductionAlternative &alternative :
+             set.alternatives) {
+            weightSum += double(alternative.probability);
+        }
+
+        if (!std::isfinite(weightSum) || weightSum <= 0.0) {
+            Error(loc,
+                  "Stochastic weights for symbol '%c' have invalid "
+                  "sum %f.",
+                  predecessor,
+                  weightSum);
+            return std::nullopt;
+        }
+
+        if (std::abs(weightSum - 1.0) >
+            double(ProbabilityNormalizationTolerance)) {
+            Warning(loc,
+                    "Stochastic weights for symbol '%c' sum to %f; "
+                    "normalizing them to one.",
+                    predecessor,
+                    weightSum);
+        }
+
+        Float inverseWeightSum = Float(1.0 / weightSum);
+        for (ProductionAlternative &alternative :
+             set.alternatives) {
+            alternative.probability *= inverseWeightSum;
+        }
+    }
+
+    if (definition.axiom.size() >
+        definition.maxSymbols) {
         Error(loc,
-              "L-system axiom contains %d symbols, exceeding maxsymbols=%d.",
-              int(definition.axiom.size()), int(definition.maxSymbols));
+              "L-system axiom contains %d symbols, exceeding "
+              "maxsymbols=%d.",
+              int(definition.axiom.size()),
+              int(definition.maxSymbols));
         return std::nullopt;
     }
 
@@ -438,36 +596,51 @@ std::optional<std::string> LSystemDefinition::Expand(
     const FileLoc *loc) const {
     std::string current = axiom;
 
+    std::mt19937 grammarRng(
+        static_cast<std::mt19937::result_type>(
+            seed));
+
     for (int iteration = 0; iteration < iterations; ++iteration) {
-        std::size_t nextSize = 0;
+        std::string next;
 
-        // Compute the exact next size before allocating.
+        // Most grammars grow rather than shrink. Reserving the current size
+        // avoids repeated allocations without making an unsafe growth guess.
+        next.reserve(current.size());
+
         for (char symbol : current) {
-            auto iter = productions.find(symbol);
-            std::size_t amount =
-                iter == productions.end() ? 1 : iter->second.size();
+            auto productionIter =
+                productions.find(symbol);
 
-            if (amount > maxSymbols - nextSize) {
+            if (productionIter == productions.end()) {
+                if (next.size() == maxSymbols) {
+                    Error(loc,
+                          "L-system expansion exceeds maxsymbols=%d while "
+                          "computing iteration %d.",
+                          int(maxSymbols),
+                          iteration + 1);
+                    return std::nullopt;
+                }
+
+                next.push_back(symbol);
+                continue;
+            }
+
+            const ProductionAlternative &alternative =
+                ChooseAlternative(
+                    productionIter->second,
+                    &grammarRng);
+
+            if (alternative.successor.size() >
+                maxSymbols - next.size()) {
                 Error(loc,
                       "L-system expansion exceeds maxsymbols=%d while "
                       "computing iteration %d.",
-                      int(maxSymbols), iteration + 1);
+                      int(maxSymbols),
+                      iteration + 1);
                 return std::nullopt;
             }
 
-            nextSize += amount;
-        }
-
-        std::string next;
-        next.reserve(nextSize);
-
-        // All replacements read from `current` and write to `next`
-        for (char symbol : current) {
-            auto iter = productions.find(symbol);
-            if (iter == productions.end())
-                next.push_back(symbol);
-            else
-                next.append(iter->second);
+            next.append(alternative.successor);
         }
 
         current = std::move(next);
@@ -480,12 +653,14 @@ std::optional<std::string> LSystemDefinition::Expand(
 }
 
 std::string LSystemDefinition::ToString() const {
-    std::vector<std::pair<char, std::string>> sortedRules(
-        productions.begin(), productions.end());
-    std::sort(sortedRules.begin(), sortedRules.end(),
-              [](const auto &a, const auto &b) {
-                  return a.first < b.first;
-              });
+    std::vector<char> predecessors;
+    predecessors.reserve(productions.size());
+
+    for (const auto &[predecessor, unused] : productions)
+        predecessors.push_back(predecessor);
+
+    std::sort(predecessors.begin(),
+              predecessors.end());
 
     std::ostringstream out;
     out << "[ LSystemDefinition"
@@ -497,18 +672,44 @@ std::string LSystemDefinition::ToString() const {
         << " seed: " << seed
         << " leafLength: " << leafLength
         << " leafWidth: " << leafWidth
-        << " leafYawJitterDegrees: " << leafYawJitterDegrees
-        << " leafPitchJitterDegrees: " << leafPitchJitterDegrees
-        << " leafRollJitterDegrees: " << leafRollJitterDegrees
+        << " leafYawJitterDegrees: "
+        << leafYawJitterDegrees
+        << " leafPitchJitterDegrees: "
+        << leafPitchJitterDegrees
+        << " leafRollJitterDegrees: "
+        << leafRollJitterDegrees
         << " maxSymbols: " << maxSymbols
         << " productions: {";
 
-    bool first = true;
-    for (const auto &[predecessor, successor] : sortedRules) {
-        if (!first)
+    bool firstSet = true;
+
+    for (char predecessor : predecessors) {
+        if (!firstSet)
             out << ", ";
-        first = false;
-        out << predecessor << " -> \"" << successor << "\"";
+
+        firstSet = false;
+
+        const ProductionSet &set =
+            productions.at(predecessor);
+
+        out << predecessor << ": [";
+
+        for (std::size_t i = 0;
+             i < set.alternatives.size();
+             ++i) {
+            if (i != 0)
+                out << ", ";
+
+            const ProductionAlternative &alternative =
+                set.alternatives[i];
+
+            out << alternative.probability
+                << " -> \""
+                << alternative.successor
+                << "\"";
+        }
+
+        out << "]";
     }
 
     out << "} ]";

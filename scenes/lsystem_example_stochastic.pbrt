@@ -1,0 +1,131 @@
+# Stochastic grammar + separate materials + triangle-mesh leaves.
+
+Film "rgb"
+    "string filename" [ "lsystem-stochastic.png" ]
+    "integer xresolution" [ 640 ]
+    "integer yresolution" [ 640 ]
+
+Sampler "halton"
+    "integer pixelsamples" [ 128 ]
+
+Integrator "path"
+    "integer maxdepth" [ 8 ]
+
+LookAt 6 6 -9
+       0 3 0
+       0 1 0
+
+Camera "perspective"
+    "float fov" [ 42 ]
+
+WorldBegin
+
+LightSource "infinite"
+    "rgb L" [ 0.8 0.8 0.8 ]
+
+MakeNamedMaterial "bark"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.22 0.065 0.018 ]
+
+MakeNamedMaterial "leaf"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.08 0.42 0.055 ]
+
+# Stochastic grammar:
+#
+# X has three possible successors whose probabilities sum to one.
+# F remains deterministic.
+#
+# The same grammarseed in both passes guarantees matching topology.
+# The same leafseed guarantees matching leaf orientations.
+
+AttributeBegin
+    NamedMaterial "bark"
+
+    Shape "lsystem"
+        "string geometry" [ "branches" ]
+
+        "string grammar" [
+            "axiom: X"
+
+            "X:45 -> F[+XL][-XL]"
+            "X:35 -> F[&XL][^XL]"
+            "X:20 -> F[+XL][&XL][-XL]"
+
+            "F -> FF"
+        ]
+
+        "integer iterations" [ 4 ]
+
+        # `seed` remains a shared default. These two explicit values make the
+        # independent random streams clear.
+        "integer seed" [ 42 ]
+
+        "float angle" [ 24 ]
+        "float length" [ 0.45 ]
+        "float radius" [ 0.025 ]
+
+        "float leaflength" [ 0.24 ]
+        "float leafwidth" [ 0.105 ]
+        "float leafyawjitter" [ 10 ]
+        "float leafpitchjitter" [ 8 ]
+        "float leafrolljitter" [ 20 ]
+
+        "string branchtype" [ "cylinder" ]
+        "integer splitdepth" [ 0 ]
+
+        "integer leafsegments" [ 4 ]
+        "float leafbend" [ 0.08 ]
+
+        "integer maxsymbols" [ 1000000 ]
+AttributeEnd
+
+AttributeBegin
+    NamedMaterial "leaf"
+
+    Shape "lsystem"
+        "string geometry" [ "leaves" ]
+
+        "string grammar" [
+            "axiom: X"
+
+            "X:45 -> F[+XL][-XL]"
+            "X:35 -> F[&XL][^XL]"
+            "X:20 -> F[+XL][&XL][-XL]"
+
+            "F -> FF"
+        ]
+
+        "integer iterations" [ 4 ]
+
+        "integer seed" [ 42 ]
+
+        "float angle" [ 24 ]
+        "float length" [ 0.45 ]
+        "float radius" [ 0.025 ]
+
+        "float leaflength" [ 0.24 ]
+        "float leafwidth" [ 0.105 ]
+        "float leafyawjitter" [ 10 ]
+        "float leafpitchjitter" [ 8 ]
+        "float leafrolljitter" [ 20 ]
+
+        "string branchtype" [ "cylinder" ]
+        "integer splitdepth" [ 0 ]
+
+        "integer leafsegments" [ 4 ]
+        "float leafbend" [ 0.08 ]
+
+        "integer maxsymbols" [ 1000000 ]
+AttributeEnd
+
+AttributeBegin
+    Material "diffuse"
+        "rgb reflectance" [ 0.18 0.22 0.13 ]
+
+    Translate 0 -0.02 0
+    Rotate -90 1 0 0
+
+    Shape "disk"
+        "float radius" [ 8 ]
+AttributeEnd

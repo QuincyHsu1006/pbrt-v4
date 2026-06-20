@@ -79,10 +79,20 @@ struct TurtleResult {
     std::string ToString() const;
 };
 
+struct ProductionAlternative {
+    Float probability = 1.f;
+    std::string successor;
+};
+
+struct ProductionSet {
+    bool stochastic = false;
+    std::vector<ProductionAlternative> alternatives;
+};
+
 struct LSystemDefinition {
     // Grammar
     std::string axiom;
-    std::unordered_map<char, std::string> productions;
+    std::unordered_map<char, ProductionSet> productions;
 
     // Parameters read from the .pbrt file
     int iterations = 0;
