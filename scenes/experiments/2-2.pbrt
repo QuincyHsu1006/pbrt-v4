@@ -1,0 +1,65 @@
+# pbrt-v4 Version 8.1
+# Parametric modules with fixed arity for ordinary variables.
+
+Film "rgb"
+    "string filename" [ "exp2-2.png" ]
+    "integer xresolution" [ 640 ]
+    "integer yresolution" [ 640 ]
+
+Sampler "halton"
+    "integer pixelsamples" [ 128 ]
+
+Integrator "path"
+    "integer maxdepth" [ 8 ]
+
+LookAt 0 4 -9
+       0 3 0
+       0 1 0
+
+Camera "perspective"
+    "float fov" [ 42 ]
+
+WorldBegin
+
+LightSource "infinite"
+    "rgb L" [ 0.8 0.8 0.8 ]
+AttributeBegin
+    Material "diffuse"
+        "rgb reflectance" [ 0.22 0.065 0.018 ]
+
+    Shape "lsystem"
+        "string constants" [
+            "r1 = 0.9"
+            "r2 = 0.8"
+            "a1 = 20"
+            "a2 = 50"
+            "wr = 0.707"
+        ]
+
+        "string grammar" [
+            "axiom: A(1, 0.15)"
+
+            "A(l,w) -> !(w)F(l)[&(a1)B(l*r1,w*wr)]/(180)[&(a2)B(l*r2,w*wr)]"
+            "B(l,w) -> !(w)F(l)[+(a1)$B(l*r1,w*wr)][-(a2)$B(l*r2,w*wr)]"
+        ]
+
+        "integer iterations" [ 10 ]
+        "integer grammarseed" [ 42 ]
+
+        "float angle" [ 25 ]
+        "float length" [ 0.3 ]
+        "float radius" [ 0.02 ]
+
+        "string branchtype" [ "cylinder" ]
+        "integer splitdepth" [ 0 ]
+        "integer maxmodules" [ 1000000 ]
+AttributeEnd
+
+AttributeBegin
+    Material "diffuse"
+        "rgb reflectance" [ 0.18 0.22 0.13 ]
+    Translate 0 -0.02 0
+    Rotate -90 1 0 0
+    Shape "disk"
+        "float radius" [ 8 ]
+AttributeEnd
